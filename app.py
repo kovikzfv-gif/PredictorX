@@ -1,5 +1,5 @@
 # ==================================================
-# PredictorX Web App – Pro Gate + Usage Limits
+# PredictorX Web App – Polished + Stripe Checkout
 # ==================================================
 
 import streamlit as st
@@ -12,16 +12,7 @@ import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="PredictorX", layout="wide")
 
-# ---------------------------
-# PRO GATE + FREE LIMITS
-# ---------------------------
-FREE_USES_PER_SESSION = 5  # change this if you want
-
-if "is_pro" not in st.session_state:
-    st.session_state.is_pro = False
-if "free_uses" not in st.session_state:
-    st.session_state.free_uses = 0
-
+# ====== HEADER ======
 st.title("🔮 PredictorX Trading AI")
 st.caption("AI-powered market analysis • Signals • Risk management (Educational use only)")
 
@@ -38,68 +29,66 @@ with st.expander("Usage Terms"):
 - Use at your own risk
 """)
 
-# Pro / Free status bar
-pro_key_saved = st.secrets.get("PRO_KEY", None)
-
-colA, colB, colC = st.columns([1.2, 1.2, 2])
-with colA:
-    if st.session_state.is_pro:
-        st.success("✅ Pro: ON")
-    else:
-        st.info("Free Mode")
-
-with colB:
-    if not st.session_state.is_pro:
-        remaining = max(0, FREE_USES_PER_SESSION - st.session_state.free_uses)
-        st.write(f"Free uses left: **{remaining} / {FREE_USES_PER_SESSION}**")
-    else:
-        st.write("Unlimited uses")
-
-with colC:
-    with st.popover("Unlock Pro"):
-        st.write("Enter your Pro Key to unlock unlimited use.")
-        entered = st.text_input("Pro Key", type="password")
-        if st.button("Activate Pro"):
-            if pro_key_saved and entered == pro_key_saved:
-                st.session_state.is_pro = True
-                st.success("Pro unlocked ✅")
-            else:
-                st.error("Invalid Pro Key ❌")
-
-# Hero + Pro banner
+# ====== HERO ======
 st.markdown("""
 ### 📈 AI Market Snapshot in Seconds
-Generate BUY / SELL / WAIT signals, confidence scores, risk levels, and forecasts instantly.
+Generate BUY / SELL / WAIT signals, confidence scores,
+risk levels, and forecasts instantly.
 """)
 
-if not st.session_state.is_pro:
-    st.info("🚀 PredictorX Pro unlocks unlimited analyses (no daily/session limits).")
+# ====== STRIPE UPGRADE SECTION ======
+st.markdown("## 💳 Upgrade to PredictorX Pro")
 
-# If free limit reached, stop
-if (not st.session_state.is_pro) and (st.session_state.free_uses >= FREE_USES_PER_SESSION):
-    st.error("❌ Free limit reached for this session. Unlock Pro to continue.")
-    st.stop()
+stripe_ready = (
+    "STRIPE_SECRET_KEY" in st.secrets
+    and "STRIPE_PRICE_ID" in st.secrets
+    and "APP_URL" in st.secrets
+)
 
-# ---------------------------
-# USER INPUT
-# ---------------------------
+if stripe_ready:
+    try:
+        import stripe
+        stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
+
+        st.info("🚀 PredictorX Pro: unlimited analyses + future Pro features (alerts, backtesting, watchlists).")
+
+        if st.button("Buy PredictorX Pro (Subscription)"):
+            session = stripe.checkout.Session.create(
+                payment_method_types=["card"],
+                line_items=[
+                    {"price": st.secrets["STRIPE_PRICE_ID"], "quantity": 1}
+                ],
+                mode="subscription",
+                success_url=st.secrets["APP_URL"] + "?success=true",
+                cancel_url=st.secrets["APP_URL"],
+            )
+            st.success("Checkout created ✅")
+            st.markdown(f"[👉 Click here to complete payment]({session.url})")
+
+        # Optional: show success message if redirected back
+        if st.query_params.get("success") == ["true"]:
+            st.success("✅ Payment successful! (Auto-unlock comes next with webhooks.)")
+
+    except ModuleNotFoundError:
+        st.error("Stripe package not installed. Add `stripe` to requirements.txt and redeploy.")
+    except Exception as e:
+        st.error(f"Stripe error: {e}")
+else:
+    st.info(
+        "Stripe isn’t configured yet. Add these to Streamlit Secrets:\n\n"
+        "- STRIPE_SECRET_KEY\n"
+        "- STRIPE_PRICE_ID\n"
+        "- APP_URL\n"
+    )
+
+st.divider()
+
+# ====== USER INPUT ======
 symbol = st.text_input("Enter ticker (e.g. AAPL, TSLA, BTC-USD):", value="TSLA").upper()
 period = st.selectbox("Select time period:", ["1mo", "3mo", "6mo", "1y", "2y"])
 future_steps = st.number_input("Future steps to predict:", min_value=1, max_value=30, value=5)
 
-# Button so we only count “uses” when they actually run it
-run = st.button("Run PredictorX")
-
-if not run:
-    st.stop()
-
-# Count a free use only when the run button is pressed
-if not st.session_state.is_pro:
-    st.session_state.free_uses += 1
-
-# ---------------------------
-# FETCH DATA
-# ---------------------------
+# ====== FETCH DATA ======
 st.text("Fetching market data...")
 try:
     data = yf.download(symbol, period=period, progress=False)
@@ -110,6 +99,7 @@ except Exception as e:
     st.error(f"❌ Error fetching data: {e}")
     st.stop()
 
+# ====== CLEAN CLOSE PRICES ======
 close = data["Close"]
 if isinstance(close, pd.DataFrame):
     close = close.iloc[:, 0]
@@ -123,9 +113,7 @@ if prices.size < 10:
 
 st.success("Market data loaded!")
 
-# ---------------------------
-# AI MODEL
-# ---------------------------
+# ====== AI MODEL ======
 X = np.arange(len(prices)).reshape(-1, 1)
 y = prices
 
@@ -143,7 +131,7 @@ last_price = float(prices[-1])
 avg_future = float(np.mean(future_prices))
 percent_change = ((avg_future - last_price) / last_price) * 100
 
-# Signal
+# ====== SIGNAL ======
 if percent_change > 0.3:
     signal = "BUY"
 elif percent_change < -0.3:
@@ -164,9 +152,7 @@ elif signal == "SELL":
 else:
     entry = stop_loss = take_profit = None
 
-# ---------------------------
-# OUTPUT
-# ---------------------------
+# ====== OUTPUT ======
 st.subheader("📊 PredictorX Signal")
 st.write(f"**Asset:** {symbol}")
 st.write(f"**Signal:** {signal}")
@@ -185,6 +171,7 @@ st.subheader("🔮 Future Predictions")
 for i, p in enumerate(future_prices, 1):
     st.write(f"Step {i}: {float(p):.2f}")
 
+# ====== CHART ======
 st.subheader("📈 Price Chart")
 fig, ax = plt.subplots(figsize=(10, 5))
 ax.plot(prices, label="Historical Price")
@@ -193,7 +180,7 @@ ax.plot(
     future_prices,
     linestyle="--",
     marker="x",
-    label="Forecast",
+    label="Forecast"
 )
 
 if signal != "WAIT":
@@ -205,4 +192,3 @@ ax.set_xlabel("Time")
 ax.set_ylabel("Price")
 ax.legend()
 st.pyplot(fig)
-
