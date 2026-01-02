@@ -1,14 +1,15 @@
 # ==================================================
-# PredictorX – Streamlit Trading App + Stripe Checkout (Subscription)
+# PredictorX – Streamlit Trading App + Stripe Checkout (NO KERAS)
 # ==================================================
 
 import streamlit as st
 import numpy as np
-import yfinance as yf
 import pandas as pd
+import yfinance as yf
+import matplotlib.pyplot as plt
+
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
-import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="PredictorX", layout="wide")
 
@@ -19,14 +20,13 @@ st.title("🔮 PredictorX Trading AI")
 st.caption("Real market data • AI forecast • Risk management (Educational use only)")
 
 st.warning(
-    "⚠️ Disclaimer: PredictorX is for educational and paper-trading purposes only. "
-    "It does NOT provide financial advice and does NOT guarantee profits."
+    "⚠️ Disclaimer: PredictorX is for educational/paper-trading only. "
+    "This is NOT financial advice and does not guarantee profits."
 )
 
 # ----------------------------
-# Pro gate (optional)
+# Session state
 # ----------------------------
-# If you later add webhook auto-unlock, we store it here:
 if "is_pro" not in st.session_state:
     st.session_state.is_pro = False
 
@@ -50,7 +50,7 @@ if stripe_ready:
         success_url = base + "/?success=true"
         cancel_url = base + "/"
 
-        st.info("🚀 PredictorX Pro (Monthly): unlocks unlimited usage + upcoming pro features.")
+        st.info("🚀 PredictorX Pro (Monthly): unlocks unlimited usage + upcoming Pro features.")
 
         if st.button("Buy PredictorX Pro (Monthly Subscription)"):
             session = stripe.checkout.Session.create(
@@ -63,33 +63,28 @@ if stripe_ready:
             st.success("Checkout created ✅")
             st.markdown(f"[👉 Click here to complete payment]({session.url})")
 
-        # Success message after redirect
         if st.query_params.get("success") == ["true"]:
-            st.success("✅ Payment successful! Now we just verify Pro access below (email check).")
+            st.success("✅ Payment successful! Enter your checkout email below to unlock Pro.")
 
     except ModuleNotFoundError:
-        st.error("Stripe package not installed. Add `stripe` to requirements.txt and redeploy.")
+        st.error("Stripe package not installed. Add `stripe==10.12.0` to requirements.txt and redeploy.")
     except Exception as e:
         st.error(f"Stripe error: {e}")
 else:
     st.info(
-        "Stripe isn’t configured yet. Add these to Streamlit Secrets:\n\n"
-        "- STRIPE_SECRET_KEY (sk_test_...)\n"
-        "- STRIPE_PRICE_ID (price_...)\n"
-        f"- APP_URL (your Streamlit app URL)\n\n"
-        "Example APP_URL:\n"
-        "https://predictorx-99hksxmjimzrdxphbqftsy.streamlit.app"
+        "Stripe not configured yet. Add these secrets:\n\n"
+        "- STRIPE_SECRET_KEY\n"
+        "- STRIPE_PRICE_ID\n"
+        "- APP_URL\n"
     )
 
 # ----------------------------
 # Pro unlock by email (Webhook backend) – OPTIONAL
 # ----------------------------
-# Only works if you set WEBHOOK_BASE_URL secret to your Render backend URL
 st.markdown("### ✅ Pro Access (after purchase)")
 
-email = st.text_input("Email used at checkout (to unlock Pro):", value="")
+email = st.text_input("Email used at checkout:", value="")
 
-is_pro = False
 if email and "WEBHOOK_BASE_URL" in st.secrets:
     try:
         import requests
@@ -102,33 +97,32 @@ if email and "WEBHOOK_BASE_URL" in st.secrets:
     except Exception:
         is_pro = False
 
-if "WEBHOOK_BASE_URL" not in st.secrets:
-    st.caption("ℹ️ Auto-unlock not connected yet (missing WEBHOOK_BASE_URL in Secrets).")
-elif email:
     if is_pro:
         st.success("✅ Pro Active! Unlimited access unlocked.")
         st.session_state.is_pro = True
     else:
-        st.info("Not Pro yet for this email. If you just paid, wait ~5 seconds and try again.")
+        st.info("Not Pro yet for this email. If you just paid, wait 5–10 seconds and try again.")
 else:
-    st.caption("Enter the same email you used in Stripe Checkout.")
+    if "WEBHOOK_BASE_URL" not in st.secrets:
+        st.caption("ℹ️ Auto-unlock not connected (missing WEBHOOK_BASE_URL in Secrets).")
+    else:
+        st.caption("Enter the same email you used during Stripe Checkout.")
 
 st.divider()
 
 # ==================================================
 # Main App
 # ==================================================
-
 st.markdown("## 📈 Market Forecast")
 
 symbol = st.text_input("Enter ticker (e.g. AAPL, TSLA, BTC-USD):", value="TSLA").upper()
 period = st.selectbox("Select time period:", ["1mo", "3mo", "6mo", "1y", "2y"])
 future_steps = st.number_input("Future steps to predict:", min_value=1, max_value=30, value=5)
 
-# Optional: limit free users a bit (you can change these)
+# Free limit (optional)
 if not st.session_state.is_pro:
-    st.caption("Free mode limits: max 10 steps + longer periods recommended.")
     future_steps = int(min(future_steps, 10))
+    st.caption("Free mode: max 10 forecast steps. Upgrade to Pro for more.")
 
 st.text("Fetching market data...")
 try:
@@ -154,7 +148,7 @@ if prices.size < 10:
 st.success("✅ Market data loaded!")
 
 # ----------------------------
-# AI model (simple linear trend baseline)
+# ML Forecast (simple baseline)
 # ----------------------------
 X = np.arange(len(prices)).reshape(-1, 1)
 y = prices
@@ -218,9 +212,6 @@ st.subheader("🔮 Future Predictions")
 for i, p in enumerate(future_prices, 1):
     st.write(f"Step {i}: {float(p):.2f}")
 
-# ----------------------------
-# Chart
-# ----------------------------
 st.subheader("📈 Price Chart")
 fig, ax = plt.subplots(figsize=(10, 5))
 ax.plot(prices, label="Historical Price")
