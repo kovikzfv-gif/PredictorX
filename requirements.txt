@@ -3,5 +3,7 @@ yfinance
 numpy
 scikit-learn
 matplotlib
-stripe
+stripe==10.12.0
+requests
+
 
