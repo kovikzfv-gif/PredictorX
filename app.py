@@ -1,3 +1,4 @@
+APP_VERSION = "PredictorX WEB v1.6 - FIXED FLATTEN (stamp)"
 # ==================================================
 # PredictorX Web App – Trading Edition (ULTRA ROBUST)
 # Fixes Streamlit Cloud numpy array formatting crash
