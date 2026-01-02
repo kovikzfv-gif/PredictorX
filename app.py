@@ -1,5 +1,5 @@
 # ==================================================
-# PredictorX Web App – Polished + Stripe Checkout (NO FastAPI)
+# PredictorX – Streamlit Trading App + Stripe Checkout (Subscription)
 # ==================================================
 
 import streamlit as st
@@ -12,33 +12,27 @@ import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="PredictorX", layout="wide")
 
-# ====== HEADER ======
+# ----------------------------
+# Header
+# ----------------------------
 st.title("🔮 PredictorX Trading AI")
-st.caption("AI-powered market analysis • Signals • Risk management (Educational use only)")
+st.caption("Real market data • AI forecast • Risk management (Educational use only)")
 
 st.warning(
     "⚠️ Disclaimer: PredictorX is for educational and paper-trading purposes only. "
-    "It does NOT provide financial advice or guarantee profits."
+    "It does NOT provide financial advice and does NOT guarantee profits."
 )
 
-with st.expander("Usage Terms"):
-    st.markdown("""
-- Educational tool only
-- Signals are probabilistic
-- Market data may be delayed
-- Use at your own risk
-""")
+# ----------------------------
+# Pro gate (optional)
+# ----------------------------
+# If you later add webhook auto-unlock, we store it here:
+if "is_pro" not in st.session_state:
+    st.session_state.is_pro = False
 
-# ====== HERO ======
-st.markdown("""
-### 📈 AI Market Snapshot in Seconds
-Generate BUY / SELL / WAIT signals, confidence scores,
-risk levels, and forecasts instantly.
-""")
-
-st.info("🚀 PredictorX Pro is in progress (subscriptions via Stripe).")
-
-# ====== STRIPE UPGRADE SECTION ======
+# ----------------------------
+# Stripe Checkout (Subscription)
+# ----------------------------
 st.markdown("## 💳 Upgrade to PredictorX Pro")
 
 stripe_ready = (
@@ -52,42 +46,90 @@ if stripe_ready:
         import stripe
         stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
 
+        base = st.secrets["APP_URL"].rstrip("/")
+        success_url = base + "/?success=true"
+        cancel_url = base + "/"
+
+        st.info("🚀 PredictorX Pro (Monthly): unlocks unlimited usage + upcoming pro features.")
+
         if st.button("Buy PredictorX Pro (Monthly Subscription)"):
             session = stripe.checkout.Session.create(
                 payment_method_types=["card"],
                 line_items=[{"price": st.secrets["STRIPE_PRICE_ID"], "quantity": 1}],
                 mode="subscription",
-                success_url=st.secrets["APP_URL"] + "?success=true",
-                cancel_url=st.secrets["APP_URL"],
+                success_url=success_url,
+                cancel_url=cancel_url,
             )
             st.success("Checkout created ✅")
             st.markdown(f"[👉 Click here to complete payment]({session.url})")
 
-        # Optional: show success if redirected back
+        # Success message after redirect
         if st.query_params.get("success") == ["true"]:
-            st.success("✅ Payment successful! (Auto-unlock comes next with webhooks.)")
+            st.success("✅ Payment successful! Now we just verify Pro access below (email check).")
 
     except ModuleNotFoundError:
         st.error("Stripe package not installed. Add `stripe` to requirements.txt and redeploy.")
     except Exception as e:
         st.error(f"Stripe error: {e}")
-
 else:
     st.info(
         "Stripe isn’t configured yet. Add these to Streamlit Secrets:\n\n"
         "- STRIPE_SECRET_KEY (sk_test_...)\n"
         "- STRIPE_PRICE_ID (price_...)\n"
-        "- APP_URL (your Streamlit app URL)\n"
+        f"- APP_URL (your Streamlit app URL)\n\n"
+        "Example APP_URL:\n"
+        "https://predictorx-99hksxmjimzrdxphbqftsy.streamlit.app"
     )
+
+# ----------------------------
+# Pro unlock by email (Webhook backend) – OPTIONAL
+# ----------------------------
+# Only works if you set WEBHOOK_BASE_URL secret to your Render backend URL
+st.markdown("### ✅ Pro Access (after purchase)")
+
+email = st.text_input("Email used at checkout (to unlock Pro):", value="")
+
+is_pro = False
+if email and "WEBHOOK_BASE_URL" in st.secrets:
+    try:
+        import requests
+        r = requests.get(
+            st.secrets["WEBHOOK_BASE_URL"].rstrip("/") + "/pro/check",
+            params={"email": email},
+            timeout=6
+        )
+        is_pro = bool(r.json().get("pro", False))
+    except Exception:
+        is_pro = False
+
+if "WEBHOOK_BASE_URL" not in st.secrets:
+    st.caption("ℹ️ Auto-unlock not connected yet (missing WEBHOOK_BASE_URL in Secrets).")
+elif email:
+    if is_pro:
+        st.success("✅ Pro Active! Unlimited access unlocked.")
+        st.session_state.is_pro = True
+    else:
+        st.info("Not Pro yet for this email. If you just paid, wait ~5 seconds and try again.")
+else:
+    st.caption("Enter the same email you used in Stripe Checkout.")
 
 st.divider()
 
-# ====== USER INPUT ======
+# ==================================================
+# Main App
+# ==================================================
+
+st.markdown("## 📈 Market Forecast")
+
 symbol = st.text_input("Enter ticker (e.g. AAPL, TSLA, BTC-USD):", value="TSLA").upper()
 period = st.selectbox("Select time period:", ["1mo", "3mo", "6mo", "1y", "2y"])
 future_steps = st.number_input("Future steps to predict:", min_value=1, max_value=30, value=5)
 
-# ====== FETCH DATA ======
+# Optional: limit free users a bit (you can change these)
+if not st.session_state.is_pro:
+    st.caption("Free mode limits: max 10 steps + longer periods recommended.")
+    future_steps = int(min(future_steps, 10))
+
 st.text("Fetching market data...")
 try:
     data = yf.download(symbol, period=period, progress=False)
@@ -98,7 +140,6 @@ except Exception as e:
     st.error(f"❌ Error fetching data: {e}")
     st.stop()
 
-# ====== CLEAN CLOSE PRICES ======
 close = data["Close"]
 if isinstance(close, pd.DataFrame):
     close = close.iloc[:, 0]
@@ -110,16 +151,19 @@ if prices.size < 10:
     st.error("❌ Not enough data. Try a longer timeframe.")
     st.stop()
 
-st.success("Market data loaded!")
+st.success("✅ Market data loaded!")
 
-# ====== AI MODEL ======
+# ----------------------------
+# AI model (simple linear trend baseline)
+# ----------------------------
 X = np.arange(len(prices)).reshape(-1, 1)
 y = prices
 
 model = LinearRegression()
 model.fit(X, y)
 
-confidence = float(r2_score(y, model.predict(X)) * 100)
+fit_pred = model.predict(X)
+confidence = float(r2_score(y, fit_pred) * 100)
 confidence = max(0.0, min(confidence, 95.0))
 confidence = round(confidence, 1)
 
@@ -130,7 +174,9 @@ last_price = float(prices[-1])
 avg_future = float(np.mean(future_prices))
 percent_change = ((avg_future - last_price) / last_price) * 100
 
-# ====== SIGNAL ======
+# ----------------------------
+# Signal logic
+# ----------------------------
 if percent_change > 0.3:
     signal = "BUY"
 elif percent_change < -0.3:
@@ -151,7 +197,9 @@ elif signal == "SELL":
 else:
     entry = stop_loss = take_profit = None
 
-# ====== OUTPUT ======
+# ----------------------------
+# Output
+# ----------------------------
 st.subheader("📊 PredictorX Signal")
 st.write(f"**Asset:** {symbol}")
 st.write(f"**Signal:** {signal}")
@@ -170,7 +218,9 @@ st.subheader("🔮 Future Predictions")
 for i, p in enumerate(future_prices, 1):
     st.write(f"Step {i}: {float(p):.2f}")
 
-# ====== CHART ======
+# ----------------------------
+# Chart
+# ----------------------------
 st.subheader("📈 Price Chart")
 fig, ax = plt.subplots(figsize=(10, 5))
 ax.plot(prices, label="Historical Price")
